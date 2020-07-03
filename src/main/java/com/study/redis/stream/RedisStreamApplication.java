@@ -2,14 +2,15 @@ package com.study.redis.stream;
 
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.beans.factory.FactoryBean;
 import org.springframework.boot.SpringApplication;
 import org.springframework.boot.autoconfigure.SpringBootApplication;
 import org.springframework.boot.context.event.ApplicationReadyEvent;
-import org.springframework.context.ApplicationListener;
+import org.springframework.boot.context.properties.EnableConfigurationProperties;
+import org.springframework.context.annotation.Bean;
 import org.springframework.context.event.EventListener;
 import org.springframework.data.redis.connection.stream.StreamRecords;
 import org.springframework.data.redis.core.RedisTemplate;
-import org.springframework.data.redis.hash.Jackson2HashMapper;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
@@ -21,13 +22,59 @@ import org.springframework.web.servlet.mvc.method.annotation.ResponseEntityExcep
 import java.util.List;
 import java.util.stream.IntStream;
 
+import static java.util.Objects.nonNull;
+
 @SpringBootApplication
+@EnableConfigurationProperties({RedisStreamProperties.class})
 public class RedisStreamApplication {
 
     public static void main(String[] args) {
         SpringApplication.run(RedisStreamApplication.class, args);
     }
 
+    @Bean
+    StreamTemplateFactoryBean streamTemplateFactoryBean(RedisStreamProperties redisStreamProperties,
+                                                        RedisTemplate<String, String> redisTemplate) {
+        var entry = redisStreamProperties.getConfig().entrySet()
+                .stream()
+                .findFirst()
+                .orElse(null);
+
+        return new StreamTemplateFactoryBean(entry.getKey(), entry.getValue(), redisTemplate);
+    }
+
+}
+
+class StreamTemplateFactoryBean implements FactoryBean<StreamTemplate> {
+
+    private String stream;
+    private RedisStreamProperties.StreamProperties streamProperties;
+    private RedisTemplate<String, String> redisTemplate;
+
+    StreamTemplateFactoryBean(String stream, RedisStreamProperties.StreamProperties streamProperties, RedisTemplate<String, String> redisTemplate) {
+        this.stream = stream;
+        this.streamProperties = streamProperties;
+        this.redisTemplate = redisTemplate;
+    }
+
+    @Override
+    public StreamTemplate getObject() throws Exception {
+        return createStreamTemplate();
+    }
+
+    @Override
+    public Class<?> getObjectType() {
+        return StreamTemplate.class;
+    }
+
+    private StreamTemplate createStreamTemplate() {
+        var streamTemplate = new StreamTemplate(redisTemplate, stream);
+        if (nonNull(streamProperties)) {
+            streamTemplate.setMaxNumberConsumers(streamProperties.getMaxNumberConsumers());
+            streamTemplate.setMaxNumberMessages(streamProperties.getMaxNumberMessages());
+        }
+        return streamTemplate;
+    }
 }
 
 @Component
@@ -37,7 +84,7 @@ class Runner {
     public static final String CUSTOMER_STREAM = "customer-stream";
     public static final String CUSTOMER_GROUP = "customer-group";
 
-    private final RedisTemplate<String, String> redisTemplate;
+    private final StreamTemplate streamTemplate;
 
     @EventListener(ApplicationReadyEvent.class)
     public void run() {
@@ -46,12 +93,9 @@ class Runner {
                     final var record = StreamRecords.newRecord()
                             .in(CUSTOMER_STREAM)
                             .ofObject(new Customer("Name Customer " + i));
-                    redisTemplate.opsForStream(new Jackson2HashMapper(true))
-                            .add(record);
+                    streamTemplate.add(record);
                 });
-        if (redisTemplate.opsForStream().groups(CUSTOMER_STREAM).stream().noneMatch(group -> group.groupName().equals(CUSTOMER_GROUP))) {
-            redisTemplate.opsForStream().createGroup(CUSTOMER_STREAM, CUSTOMER_GROUP);
-        }
+        streamTemplate.createGroup(CUSTOMER_GROUP);
     }
 }
 

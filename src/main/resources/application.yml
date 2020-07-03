@@ -1,0 +1,5 @@
+redis:
+  stream:
+    config:
+      customer-stream:
+        max-number-messages: 10

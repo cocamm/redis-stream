@@ -1,9 +1,6 @@
 package com.study.redis.stream;
 
-import lombok.RequiredArgsConstructor;
-import org.springframework.data.redis.connection.stream.*;
-import org.springframework.data.redis.core.RedisTemplate;
-import org.springframework.data.redis.hash.Jackson2HashMapper;
+import org.springframework.data.redis.connection.stream.Record;
 import org.springframework.stereotype.Service;
 
 import java.util.Collection;
@@ -13,34 +10,20 @@ import java.util.Optional;
 import java.util.stream.Collectors;
 
 import static com.study.redis.stream.Runner.CUSTOMER_GROUP;
-import static com.study.redis.stream.Runner.CUSTOMER_STREAM;
 
 @Service
-@RequiredArgsConstructor
 class RedisStreamCustomerRepository implements CustomerRepository {
 
-    private static final int CONSUMER_COUNT_LIMIT = 5;
+    private final StreamTemplate streamTemplate;
 
-    private final RedisTemplate<String, String> redisTemplate;
+    RedisStreamCustomerRepository(StreamTemplate streamTemplate) {
+        this.streamTemplate = streamTemplate;
+    }
 
     @Override
     public List<Customer> findAll(String consumerId) {
-        redisTemplate.opsForStream()
-                .groups("customer-stream")
-                .stream()
-                .findFirst()
-                .ifPresent(group -> {
-                    var consumerCount = group.consumerCount();
-                    if (consumerCount > CONSUMER_COUNT_LIMIT) {
-                        throw new IllegalStateException("You cannot keep open more than " + CONSUMER_COUNT_LIMIT + " stream consumers");
-                    }
-                });
-
-        var messages = redisTemplate.opsForStream(new Jackson2HashMapper(true))
-                .read(Customer.class, Consumer.from(CUSTOMER_GROUP,
-                        "customer-" + consumerId),
-                        StreamReadOptions.empty().noack().count(10),
-                        StreamOffset.create(CUSTOMER_STREAM, ReadOffset.lastConsumed()));
+        var messages = streamTemplate
+                .readFromLast(CUSTOMER_GROUP, "customer-" + consumerId, Customer.class);
 
         return Optional.ofNullable(messages)
                 .map(Collection::stream)
